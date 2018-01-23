@@ -163,10 +163,10 @@ discrete_dists = [
                  'test_data': [2]},
                 {'logits': [list(map(math.log, [0.1, 0.6, 0.3])),
                             list(map(math.log, [0.2, 0.4, 0.4]))],
-                 'test_data': [[2], [0]]},
+                 'test_data': [2, 0]},
                 {'ps': [[0.1, 0.6, 0.3],
                         [0.2, 0.4, 0.4]],
-                 'test_data': [[2], [0]]}
+                 'test_data': [2, 0]}
             ],
             test_data_indices=[0, 1, 2],
             batch_data_indices=[-1, -2],
