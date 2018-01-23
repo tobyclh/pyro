@@ -4,7 +4,7 @@ import torch
 from torch.autograd import Variable
 
 from pyro.distributions.distribution import Distribution
-from pyro.distributions.util import copy_docs_from
+from pyro.distributions.util import copy_docs_from, broadcast_shape
 
 
 @copy_docs_from(Distribution)
@@ -51,7 +51,7 @@ class Delta(Distribution):
 
     def batch_log_pdf(self, x):
         v = self.v
-        v = v.expand(self.shape(x))
+        v = v.expand(broadcast_shape(self.shape(), x.size()))
         batch_shape = self.batch_shape(x) + (1,)
         return torch.sum(torch.eq(x, v).float().log(), -1).contiguous().view(batch_shape)
 

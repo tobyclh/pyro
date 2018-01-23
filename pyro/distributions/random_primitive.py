@@ -25,9 +25,9 @@ class RandomPrimitive(Distribution):
     def reparameterized(self):
         return self.dist_class.reparameterized
 
-    def batch_shape(self, x=None, *args, **kwargs):
+    def batch_shape(self, *args, **kwargs):
         kwargs.pop('sample_shape', None)
-        return self.dist_class(*args, **kwargs).batch_shape(x)
+        return self.dist_class(*args, **kwargs).batch_shape()
 
     def event_shape(self, *args, **kwargs):
         kwargs.pop('sample_shape', None)
