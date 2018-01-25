@@ -36,7 +36,7 @@ class LogNormal(Distribution):
         return self.mu.size()
 
     def event_shape(self):
-        return ()
+        return torch.Size()
 
     def sample(self, sample_shape=torch.Size()):
         shape = sample_shape + self.mu.size()
