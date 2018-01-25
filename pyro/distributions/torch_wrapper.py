@@ -31,10 +31,10 @@ class TorchDistribution(Distribution):
             return self.torch_dist.sample(sample_shape)
 
     def batch_log_pdf(self, x):
-        sample_shape = broadcast_shape(self.batch_shape() + self.event_shape(), x.size(), strict=True)
-        batch_log_pdf_shape = sample_shape[:-1] + (1,)
+        shape = broadcast_shape(self.shape(), x.size(), strict=True)
+        batch_log_pdf_shape = shape[:-1] + (1,)
         log_pxs = self.torch_dist.log_prob(x)
-        if len(sample_shape) > len(log_pxs.size()):
+        if len(shape) > len(log_pxs.size()):
             log_pxs = log_pxs.unsqueeze(-1)
         batch_log_pdf = torch.sum(log_pxs, -1).contiguous().view(batch_log_pdf_shape)
         if self.log_pdf_mask is not None:

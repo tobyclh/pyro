@@ -38,8 +38,8 @@ class RandomPrimitive(Distribution):
         return self.dist_class(*args, **kwargs).event_dim()
 
     def shape(self, *args, **kwargs):
-        kwargs.pop('sample_shape', None)
-        return self.dist_class(*args, **kwargs).shape()
+        sample_shape = kwargs.pop('sample_shape', torch.Size())
+        return self.dist_class(*args, **kwargs).shape(sample_shape)
 
     def sample(self, *args, **kwargs):
         sample_shape = kwargs.pop('sample_shape', torch.Size())
