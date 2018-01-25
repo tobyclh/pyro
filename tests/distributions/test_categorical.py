@@ -89,10 +89,10 @@ def test_sample_dims(dim, ps):
     assert_equal(sample.size(), dist.categorical.shape(ps))
 
 
-# def test_batch_log_dims(dim, ps):
-#     ps = modify_params_using_dims(ps, dim)
-#     batch_pdf_shape = torch.Size(ps.size()[:-1] + (1,))
-#     expected_log_pdf = np.array(wrap_nested(list(np.log(ps)), dim - 1)).reshape(*batch_pdf_shape)
-#     support = dist.categorical.enumerate_support(ps)
-#     batch_log_pdf = dist.categorical.batch_log_pdf(support, ps)
-#     assert_equal(batch_log_pdf.size(), batch_pdf_shape)
+@pytest.mark.xfail('torch.categorical.enumerate_support() does not append (1,) for scalar params.')
+def test_batch_log_dims(dim, ps):
+    ps = modify_params_using_dims(ps, dim)
+    batch_pdf_shape = torch.Size(ps.size()[:-1] + (1,))
+    support = dist.categorical.enumerate_support(ps)
+    batch_log_pdf = dist.categorical.batch_log_pdf(support, ps)
+    assert_equal(batch_log_pdf.size(), batch_pdf_shape)
