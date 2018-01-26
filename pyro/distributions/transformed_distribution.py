@@ -61,7 +61,7 @@ class TransformedDistribution(Distribution):
     def event_shape(self, *args, **kwargs):
         return self.base_dist.event_shape(*args, **kwargs)
 
-    def log_pdf(self, y, *args, **kwargs):
+    def sum_log_prob(self, y, *args, **kwargs):
         """
         :param y: a value sampled from the transformed distribution
         :type y: torch.autograd.Variable
@@ -77,16 +77,16 @@ class TransformedDistribution(Distribution):
         for bijector in reversed(self.bijectors):
             log_pdf -= bijector.log_det_jacobian(value, *args, **kwargs)
             value = bijector.inverse(value)
-        log_pdf += self.base_dist.log_pdf(value, *args, **kwargs)
+        log_pdf += self.base_dist.log_prob(value, *args, **kwargs)
         return log_pdf
 
-    def batch_log_pdf(self, y, *args, **kwargs):
+    def log_prob(self, y, *args, **kwargs):
         value = y
         log_det_jacobian = 0.0
         for bijector in reversed(self.bijectors):
             log_det_jacobian += bijector.batch_log_det_jacobian(value, *args, **kwargs)
             value = bijector.inverse(value)
-        base_log_pdf = self.base_dist.batch_log_pdf(value, *args, **kwargs)
+        base_log_pdf = self.base_dist.log_prob(value, *args, **kwargs)
         if not isinstance(log_det_jacobian, numbers.Number):
             log_det_jacobian = log_det_jacobian.contiguous().view(*base_log_pdf.size())
             assert log_det_jacobian.size() == base_log_pdf.size(), \
