@@ -20,8 +20,8 @@ from pyro.infer import SVI
 from pyro.optim import ClippedAdam
 import pyro.distributions as dist
 from pyro.util import ng_ones
-from pyro.distributions.transformed_distribution import InverseAutoregressiveFlow
-from pyro.distributions.transformed_distribution import TransformedDistribution
+from pyro.distributions import InverseAutoregressiveFlow
+from pyro.distributions import TransformedDistribution
 import six.moves.cPickle as pickle
 import polyphonic_data_loader as poly
 from os.path import exists
@@ -151,8 +151,8 @@ class DMM(nn.Module):
                           dropout=rnn_dropout_rate)
 
         # if we're using normalizing flows, instantiate those too
-        iafs = [InverseAutoregressiveFlow(z_dim, iaf_dim) for _ in range(num_iafs)]
-        self.iafs = nn.ModuleList(iafs)
+        self.iafs = [InverseAutoregressiveFlow(z_dim, iaf_dim) for _ in range(num_iafs)]
+        self.iafs_modules = nn.ModuleList([iaf.module for iaf in self.iafs])
 
         # define a (trainable) parameters z_0 and z_q_0 that help define the probability
         # distributions p(z_1) and q(z_1)
@@ -202,9 +202,11 @@ class DMM(nn.Module):
             emission_probs_t = self.emitter(z_t)
             # the next statement instructs pyro to observe x_t according to the
             # bernoulli distribution p(x_t|z_t)
-            pyro.observe("obs_x_%d" % t, dist.bernoulli, mini_batch[:, t - 1, :],
-                         emission_probs_t,
-                         log_pdf_mask=mini_batch_mask[:, t - 1:t])
+            pyro.sample("obs_x_%d" % t,
+                        dist.bernoulli,
+                        emission_probs_t,
+                        log_pdf_mask=mini_batch_mask[:, t - 1:t],
+                        obs=mini_batch[:, t - 1, :])
             # the latent sampled at this time step will be conditioned upon
             # in the next time step so keep track of it
             z_prev = z_t
@@ -220,8 +222,7 @@ class DMM(nn.Module):
 
         # if on gpu we need the fully broadcast view of the rnn initial state
         # to be in contiguous gpu memory
-        h_0_contig = self.h_0 if not self.use_cuda \
-            else self.h_0.expand(1, mini_batch.size(0), self.rnn.hidden_size).contiguous()
+        h_0_contig = self.h_0.expand(1, mini_batch.size(0), self.rnn.hidden_size).contiguous()
         # push the observed x's through the rnn;
         # rnn_output contains the hidden state at each time step
         rnn_output, _ = self.rnn(mini_batch_reversed, h_0_contig)
@@ -234,19 +235,19 @@ class DMM(nn.Module):
         for t in range(1, T_max + 1):
             # the next two lines assemble the distribution q(z_t | z_{t-1}, x_{t:T})
             z_mu, z_sigma = self.combiner(z_prev, rnn_output[:, t - 1, :])
-            z_dist = dist.normal
 
             # if we are using normalizing flows, we apply the sequence of transformations
             # parameterized by self.iafs to the base distribution defined in the previous line
             # to yield a transformed distribution that we use for q(z_t|...)
-            if self.iafs.__len__() > 0:
-                z_dist = TransformedDistribution(z_dist, self.iafs)
+            if len(self.iafs) > 0:
+                z_dist = TransformedDistribution(dist.Normal(z_mu, z_sigma), self.iafs,
+                                                 log_pdf_mask=mini_batch_mask[:, t - 1:t])
+            else:
+                z_dist = dist.Normal(z_mu, z_sigma, log_pdf_mask=mini_batch_mask[:, t - 1:t])
+
             # sample z_t from the distribution z_dist
-            z_t = pyro.sample("z_%d" % t,
-                              z_dist,
-                              z_mu,
-                              z_sigma,
-                              log_pdf_mask=annealing_factor * mini_batch_mask[:, t - 1:t])
+            with pyro.poutine.scale(None, annealing_factor):
+                z_t = pyro.sample("z_%d" % t, z_dist)
             # the latent sampled at this time step will be conditioned upon in the next time step
             # so keep track of it
             z_prev = z_t
@@ -291,10 +292,10 @@ def main(args):
     test_seq_lengths = rep(test_seq_lengths)
     val_batch, val_batch_reversed, val_batch_mask, val_seq_lengths = poly.get_mini_batch(
         np.arange(n_eval_samples * val_data_sequences.shape[0]), rep(val_data_sequences),
-        val_seq_lengths, volatile=True, cuda=args.cuda)
+        val_seq_lengths, cuda=args.cuda)
     test_batch, test_batch_reversed, test_batch_mask, test_seq_lengths = poly.get_mini_batch(
         np.arange(n_eval_samples * test_data_sequences.shape[0]), rep(test_data_sequences),
-        test_seq_lengths, volatile=True, cuda=args.cuda)
+        test_seq_lengths, cuda=args.cuda)
 
     # instantiate the dmm
     dmm = DMM(rnn_dropout_rate=args.rnn_dropout_rate, num_iafs=args.num_iafs,

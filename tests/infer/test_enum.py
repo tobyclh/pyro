@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import itertools
+import logging
 import math
 
 import pytest
@@ -16,6 +17,8 @@ from pyro.infer.trace_elbo import Trace_ELBO
 from pyro.infer.tracegraph_elbo import TraceGraph_ELBO
 from tests.common import assert_equal, xfail_if_not_implemented
 
+logger = logging.getLogger(__name__)
+
 
 @pytest.mark.parametrize("graph_type", ["flat", "dense"])
 def test_iter_discrete_traces_scalar(graph_type):
@@ -25,7 +28,7 @@ def test_iter_discrete_traces_scalar(graph_type):
         p = pyro.param("p", Variable(torch.Tensor([0.05])))
         ps = pyro.param("ps", Variable(torch.Tensor([0.1, 0.2, 0.3, 0.4])))
         x = pyro.sample("x", dist.Bernoulli(p))
-        y = pyro.sample("y", dist.Categorical(ps, one_hot=False))
+        y = pyro.sample("y", dist.Categorical(ps))
         return dict(x=x, y=y)
 
     traces = list(iter_discrete_traces(graph_type, model))
@@ -51,7 +54,7 @@ def test_iter_discrete_traces_vector(graph_type):
         ps = pyro.param("ps", Variable(torch.Tensor([[0.1, 0.2, 0.3, 0.4],
                                                      [0.4, 0.3, 0.2, 0.1]])))
         x = pyro.sample("x", dist.Bernoulli(p))
-        y = pyro.sample("y", dist.Categorical(ps, one_hot=False))
+        y = pyro.sample("y", dist.Categorical(ps))
         assert x.size() == (2, 1)
         assert y.size() == (2, 1)
         return dict(x=x, y=y)
@@ -65,8 +68,7 @@ def test_iter_discrete_traces_vector(graph_type):
     for scale, trace in traces:
         x = trace.nodes["x"]["value"].data.squeeze().long()[0]
         y = trace.nodes["y"]["value"].data.squeeze().long()[0]
-        expected_scale = torch.exp(dist.Bernoulli(p).log_pdf(x) *
-                                   dist.Categorical(ps, one_hot=False).log_pdf(y))
+        expected_scale = torch.exp(dist.Bernoulli(p).log_pdf(x) * dist.Categorical(ps).log_pdf(y))
         expected_scale = expected_scale.data.view(-1)[0]
         assert_equal(scale, expected_scale)
 
@@ -78,11 +80,11 @@ def test_iter_discrete_traces_nan(enum_discrete, trace_graph):
 
     def model():
         p = Variable(torch.Tensor([0.0, 0.5, 1.0]))
-        pyro.sample("z", dist.Bernoulli(p))
+        pyro.sample("z", dist.Bernoulli(p, extra_event_dims=1))
 
     def guide():
         p = pyro.param("p", Variable(torch.Tensor([0.0, 0.5, 1.0]), requires_grad=True))
-        pyro.sample("z", dist.Bernoulli(p))
+        pyro.sample("z", dist.Bernoulli(p, extra_event_dims=1))
 
     Elbo = TraceGraph_ELBO if trace_graph else Trace_ELBO
     elbo = Elbo(enum_discrete=enum_discrete)
@@ -103,7 +105,7 @@ def gmm_model(data, verbose=False):
         assert z.size() == (1,)
         z = z.long().data[0]
         if verbose:
-            print("M{} z_{} = {}".format("  " * i, i, z))
+            logger.debug("M{} z_{} = {}".format("  " * i, i, z))
         pyro.observe("x_{}".format(i), dist.Normal(mus[z], sigma), data[i])
 
 
@@ -114,7 +116,7 @@ def gmm_guide(data, verbose=False):
         assert z.size() == (1,)
         z = z.long().data[0]
         if verbose:
-            print("G{} z_{} = {}".format("  " * i, i, z))
+            logger.debug("G{} z_{} = {}".format("  " * i, i, z))
 
 
 @pytest.mark.parametrize("data_size", [1, 2, 3])
@@ -125,7 +127,7 @@ def test_gmm_iter_discrete_traces(model, data_size, graph_type):
     data = Variable(torch.arange(0, data_size))
     traces = list(iter_discrete_traces(graph_type, model, data=data, verbose=True))
     # This non-vectorized version is exponential in data_size:
-    assert len(traces) == 2 ** data_size
+    assert len(traces) == 2**data_size
 
 
 # A Gaussian mixture model, with vectorized batching.
@@ -136,7 +138,7 @@ def gmm_batch_model(data):
     mus = Variable(torch.Tensor([-1, 1]))
     with pyro.iarange("data", len(data)) as batch:
         n = len(batch)
-        z = pyro.sample("z", dist.Categorical(p.unsqueeze(0).expand(n, 2)))
+        z = pyro.sample("z", dist.OneHotCategorical(p.unsqueeze(0).expand(n, 2)))
         assert z.size() == (n, 2)
         mu = torch.mv(z, mus)
         pyro.observe("x", dist.Normal(mu, sigma.expand(n)), data[batch])
@@ -147,7 +149,7 @@ def gmm_batch_guide(data):
         n = len(batch)
         ps = pyro.param("ps", Variable(torch.ones(n, 1) * 0.6, requires_grad=True))
         ps = torch.cat([ps, 1 - ps], dim=1)
-        z = pyro.sample("z", dist.Categorical(ps))
+        z = pyro.sample("z", dist.OneHotCategorical(ps))
         assert z.size() == (n, 2)
 
 
@@ -213,7 +215,7 @@ def test_bern_elbo_gradient(enum_discrete, trace_graph):
         p = pyro.param("p", Variable(torch.Tensor([0.5]), requires_grad=True))
         pyro.sample("z", dist.Bernoulli(p))
 
-    print("Computing gradients using surrogate loss")
+    logger.info("Computing gradients using surrogate loss")
     Elbo = TraceGraph_ELBO if trace_graph else Trace_ELBO
     elbo = Elbo(enum_discrete=enum_discrete,
                 num_particles=(1 if enum_discrete else num_particles))
@@ -223,13 +225,16 @@ def test_bern_elbo_gradient(enum_discrete, trace_graph):
     assert params, "no params found"
     actual_grads = {name: pyro.param(name).grad.clone() for name in params}
 
-    print("Computing gradients using finite difference")
+    logger.info("Computing gradients using finite difference")
     elbo = Trace_ELBO(num_particles=num_particles)
-    expected_grads = finite_difference(lambda: elbo.loss(model, guide))
+    expected_grads = finite_difference(lambda: elbo.loss(model, guide), delta=0.2)
 
     for name in params:
-        print("{} {}{}{}".format(name, "-" * 30, actual_grads[name].data,
-                                 expected_grads[name].data))
+        logger.info("\n".join([
+            "{} {}".format(name, "-" * 30),
+            "expected = {}".format(expected_grads[name].data.cpu().numpy()),
+            "  actual = {}".format(actual_grads[name].data.cpu().numpy()),
+        ]))
     assert_equal(actual_grads, expected_grads, prec=0.1)
 
 
@@ -248,7 +253,7 @@ def test_gmm_elbo_gradient(model, guide, enum_discrete, trace_graph):
     num_particles = 4000
     data = Variable(torch.Tensor([-1, 1]))
 
-    print("Computing gradients using surrogate loss")
+    logger.info("Computing gradients using surrogate loss")
     Elbo = TraceGraph_ELBO if trace_graph else Trace_ELBO
     elbo = Elbo(enum_discrete=enum_discrete,
                 num_particles=(1 if enum_discrete else num_particles))
@@ -258,11 +263,14 @@ def test_gmm_elbo_gradient(model, guide, enum_discrete, trace_graph):
     assert params, "no params found"
     actual_grads = {name: pyro.param(name).grad.clone() for name in params}
 
-    print("Computing gradients using finite difference")
+    logger.info("Computing gradients using finite difference")
     elbo = Trace_ELBO(num_particles=num_particles)
     expected_grads = finite_difference(lambda: elbo.loss(model, guide, data))
 
     for name in params:
-        print("{} {}{}{}".format(name, "-" * 30, actual_grads[name].data,
-                                 expected_grads[name].data))
+        logger.info("\n".join([
+            "{} {}".format(name, "-" * 30),
+            "expected = {}".format(expected_grads[name].data.cpu().numpy()),
+            "  actual = {}".format(actual_grads[name].data.cpu().numpy()),
+        ]))
     assert_equal(actual_grads, expected_grads, prec=0.5)
