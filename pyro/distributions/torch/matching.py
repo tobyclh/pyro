@@ -6,16 +6,6 @@ from pyro.distributions.torch_wrapper import TorchDistribution
 from pyro.distributions.util import broadcast_shape, copy_docs_from
 
 
-def _unstack(tensor, sizes):
-    assert tensor.shape(-1) == sum(sizes)
-    parts = []
-    pos = 0
-    for size in sizes:
-        parts.append(tensor[..., pos:pos + size])
-        pos += size
-    return parts
-
-
 @copy_docs_from(torch.distributions.Distribution)
 class TorchMatching(torch.distributions.Distribution):
     def __init__(self, head_logits, tail_logits, edge_logits, heads, tails,
@@ -72,12 +62,32 @@ class TorchMatching(torch.distributions.Distribution):
         # Warning: this ignores hard constraints.
         return (self.logits * value).sum(-1) + self._log_normalizer
 
-    def _compute_stats(self):
+    def _compute_stats(self, iters=6):
         """
         Computes marginals and log normalizer using loopy belief propagation.
+
+        This is very finicky and can only be run for a small number of
+        iterations before diverging, e.g. iters=4 or 6 are safe.
         """
         if self._marginals is not None:
             return
+        if not (self.one_tail_per_head and not self.one_head_per_tail):
+            raise NotImplementedError
+
+        one = self.logits.new([1])
+        head_degree = self.logits.new(self.num_heads).zero_().scatter_add_(0, self.heads, one)
+        tail_degree = self.logits.new(self.num_tails).zero_().scatter_add_(0, self.tails, one)
+        head_probs = self.logits.new(self.num_heads, int(head_degree.data.max()[0]))
+        tail_probs = self.logits.new(self.num_tails, int(tail_degree.data.max()[0]))
+
+        # Initialze heads to uniform.
+        head_probs.fill_(1)
+        head_probs /= 1 + head_degree  # the 1 is for false alarm
+        head_probs[..., head_degree.long():] = 0
+
+        # Initialize tails to cover heads.
+        tail_probs.zero_()
+        # TODO ...
 
         # FIXME these are bogus values of the correct shape.
         self._marginals = 0.5 * torch.ones(self.batch_shape + self.event_shape)
