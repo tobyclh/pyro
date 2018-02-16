@@ -2,12 +2,11 @@ from __future__ import absolute_import, division, print_function
 
 import torch
 
-from pyro.distributions.torch_wrapper import TorchDistribution
-from pyro.distributions.util import broadcast_shape, copy_docs_from
+from pyro.distributions.torch_distribution import TorchDistribution
+from pyro.distributions.util import broadcast_shape
 
 
-@copy_docs_from(torch.distributions.Distribution)
-class TorchMatching(torch.distributions.Distribution):
+class MatchingSparse(TorchDistribution):
     def __init__(self, head_logits, tail_logits, edge_logits, heads, tails,
                  one_head_per_tail=False, one_tail_per_head=False):
         if heads.size(-1) != edge_logits.shape(-1):
@@ -23,7 +22,7 @@ class TorchMatching(torch.distributions.Distribution):
 
         batch_shape = broadcast_shape(head_logits.shape[:-1], tail_logits.shape[:-1], edge_logits.shape[:-1])
         event_shape = head_logits.shape[-1] + tail_logits.shape[-1] + edge_logits.shape[-1]
-        super(TorchMatching, self).__init__(batch_shape, event_shape)
+        super(MatchingSparse, self).__init__(batch_shape, event_shape)
 
         self.head_logits = head_logits.expand(batch_shape + head_logits.shape[:-1])
         self.tail_logits = tail_logits.expand(batch_shape + tail_logits.shape[:-1])
@@ -92,10 +91,3 @@ class TorchMatching(torch.distributions.Distribution):
         # FIXME these are bogus values of the correct shape.
         self._marginals = 0.5 * torch.ones(self.batch_shape + self.event_shape)
         self._log_normalizer = torch.zeros(self.batch_shape)
-
-
-@copy_docs_from(TorchDistribution)
-class Matching(TorchDistribution):
-    def __init__(self, head_logits, tail_logits, edge_logits, heads, tails, *args, **kwargs):
-        torch_dist = TorchMatching(head_logits, tail_logits, edge_logits, heads, tails)
-        super(Matching, self).__init__(torch_dist, *args, **kwargs)
