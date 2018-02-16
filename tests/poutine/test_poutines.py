@@ -12,7 +12,8 @@ import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
 from pyro.distributions import Bernoulli, Normal
-from pyro.util import NonlocalExit, all_escape, discrete_escape, ng_ones, ng_zeros
+from pyro.poutine.util import all_escape, discrete_escape, NonlocalExit
+from pyro.util import ng_ones, ng_zeros
 from six.moves.queue import Queue
 from tests.common import assert_equal
 
@@ -432,14 +433,14 @@ class IndirectLambdaPoutineTests(TestCase):
     def setUp(self):
 
         def model(batch_size_outer=2, batch_size_inner=2):
-            mu_latent = pyro.sample("mu_latent", dist.normal, ng_zeros(1), ng_ones(1))
+            mu_latent = pyro.sample("mu_latent", dist.Normal(ng_zeros(1), ng_ones(1)))
 
             def outer(i, x):
                 pyro.map_data("map_inner_%d" % i, x, lambda _i, _x:
                               inner(i, _i, _x), batch_size=batch_size_inner)
 
             def inner(i, _i, _x):
-                pyro.sample("z_%d_%d" % (i, _i), dist.normal, mu_latent + _x, ng_ones(1))
+                pyro.sample("z_%d_%d" % (i, _i), dist.Normal(mu_latent + _x, ng_ones(1)))
 
             pyro.map_data("map_outer", [[ng_ones(1)] * 2] * 2, lambda i, x:
                           outer(i, x), batch_size=batch_size_outer)
