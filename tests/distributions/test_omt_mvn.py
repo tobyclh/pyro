@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
-from pyro.distributions.omt_mvn import OMTMultivariateNormal
+from pyro.distributions.omt_mvn import OMTMultivariateNormal, ApproxOMTMultivariateNormal
 from pyro.distributions import MultivariateNormal
 
 from tests.common import assert_equal
@@ -25,15 +25,15 @@ def analytic_grad(L11=1.0, L22=1.0, L21=1.0, omega1=1.0, omega2=1.0):
 @pytest.mark.parametrize('L11', [0.6, 0.95])
 @pytest.mark.parametrize('omega1', [0.5, 0.9])
 @pytest.mark.parametrize('sample_shape', [torch.Size([1000, 1000]), torch.Size([100000])])
-def test_mean_gradient(sample_shape, L21, omega1, L11, L22=0.8, L33=0.9, omega2=0.75):
+@pytest.mark.parametrize('mvn_dist', [OMTMultivariateNormal, ApproxOMTMultivariateNormal])
+def test_mean_gradient(mvn_dist, sample_shape, L21, omega1, L11, L22=0.8, L33=0.9, omega2=0.75):
     omega = Variable(torch.Tensor([omega1, omega2, 0.0]))
     mu = Variable(torch.zeros(3), requires_grad=True)
     zero_vec = [0.0, 0.0, 0.0]
     off_diag = Variable(torch.Tensor([zero_vec, [L21, 0.0, 0.0], zero_vec]), requires_grad=True)
     L = Variable(torch.diag(torch.Tensor([L11, L22, L33]))) + off_diag
 
-    dist = OMTMultivariateNormal(mu, L)
-    z = dist.rsample(sample_shape)
+    z = mvn_dist(mu, L).rsample(sample_shape)
     torch.cos((omega*z).sum(-1)).mean().backward()
 
     computed_grad = off_diag.grad.data.numpy()[1, 0]

@@ -79,3 +79,68 @@ class _OMTMVNSample(Function):
         L_grad = torch.tril(diff_L_ab)
 
         return loc_grad, L_grad, None
+
+
+class ApproxOMTMultivariateNormal(MultivariateNormal):
+    """Multivariate normal (Gaussian) distribution with OMT gradients w.r.t. both
+    parameters. Note the gradient computation w.r.t. the Cholesky factor has cost
+    O(D^3), although the resulting gradient variance is generally expected to be lower.
+
+    A distribution over vectors in which all the elements have a joint Gaussian
+    density.
+
+    :param torch.autograd.Variable loc: Mean.
+    :param torch.autograd.Variable scale_tril: Cholesky of Covariance matrix.
+    """
+    params = {"loc": constraints.real, "scale_tril": constraints.lower_triangular}
+
+    def __init__(self, loc, scale_tril):
+        assert(loc.dim() == 1), "OMTMultivariateNormal loc must be 1-dimensional"
+        assert(scale_tril.dim() == 2), "OMTMultivariateNormal scale_tril must be 2-dimensional"
+        covariance_matrix = torch.mm(scale_tril, scale_tril.t())
+        super(ApproxOMTMultivariateNormal, self).__init__(loc, covariance_matrix)
+        self.scale_tril = scale_tril
+
+    def rsample(self, sample_shape=torch.Size()):
+        return _ApproxOMTMVNSample.apply(self.loc, self.scale_tril, sample_shape + self.loc.shape)
+
+
+class _ApproxOMTMVNSample(Function):
+    @staticmethod
+    def forward(ctx, loc, scale_tril, shape):
+        ctx.white = loc.new(shape).normal_()
+        ctx.z = torch.matmul(ctx.white, scale_tril.t())
+        ctx.save_for_backward(scale_tril)
+        return loc + ctx.z
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad_output):
+        L, = ctx.saved_tensors
+        z = ctx.z
+        epsilon = ctx.white
+
+        dim = L.size(0)
+        g = grad_output
+        loc_grad = sum_leftmost(grad_output, -1)
+
+        identity = torch.eye(dim).type_as(g)
+        R_inv = torch.trtrs(identity, L.t(), transpose=False, upper=True)[0]
+
+        z_ja = z.unsqueeze(-1)
+        g_R_inv = torch.matmul(g, R_inv).unsqueeze(-2)
+        epsilon_jb = epsilon.unsqueeze(-2)
+        g_ja = g.unsqueeze(-1)
+        diff_L_ab = 0.5 * sum_leftmost(g_ja * epsilon_jb + g_R_inv * z_ja, -2)
+
+        Linv_eps = torch.matmul(epsilon, R_inv.t())
+        L_g = torch.matmul(g, L)
+        diff_L_ab += 0.5 * sum_leftmost(Linv_eps.unsqueeze(-1) * L_g.unsqueeze(-2), -2)
+
+        Sigma_tilde_inv_eps = torch.matmul(Linv_eps, R_inv).unsqueeze(-2)
+        Sigma_g = torch.matmul(L_g, L.t()).unsqueeze(-1)
+        diff_L_ab -= 0.5 * sum_leftmost(Sigma_tilde_inv_eps * Sigma_g, -2)
+
+        L_grad = torch.tril(diff_L_ab)
+
+        return loc_grad, L_grad, None
